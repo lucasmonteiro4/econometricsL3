@@ -1,0 +1,1090 @@
+---
+title: "Econométrie"
+subtitle: " Etude du prix des maisons en fonctions des caractéristiques du bien immobilier."
+author: "Participation : Viola Baptiste, Monteiro Lucas"
+date: "Avril 2021"
+fontsize: 12pt
+output:
+  html_document: 
+    toc: yes
+    toc_float: yes
+    number_section: no
+    theme: simplex
+    dev: png
+  pdf_document: 
+    number_section: true
+    keep_tex: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup,echo=FALSE}
+options(encoding = "UTF-8")
+knitr::opts_chunk$set(echo = FALSE,message = FALSE,
+                      warning = FALSE)
+```
+
+```{r packages}
+library(stargazer)
+library("lmtest")
+library(readxl)
+library(Hmisc)
+library(dplyr)
+library(knitr)
+library(rmarkdown)
+library(markdown)
+library(corrplot)
+library(ggplot2)
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+library(patchwork)
+library(plotly)
+library(MASS)
+library(corrplot)
+library(GGally)
+library(RColorBrewer)
+library(viridisLite)
+library(kableExtra)
+library(packcircles)
+library(ggiraph)
+library(ggridges)
+library(ggpubr)
+library(gridExtra)
+library(ggstance)
+library(cowplot)
+library(jtools)
+library(car)
+library(broom.mixed)
+library(huxtable)
+library(ggpubr)
+library(grid)
+library(performance)
+library(ggfortify)
+library(tseries)
+library(see)
+library(outliers)
+library(sandwich)
+library(hexbin)
+```
+
+
+```{r imp données ,echo=TRUE}
+data3 <- read.csv("BDD_data.csv")
+data2<-data3
+data2$lnprice<-(log(data3$price))
+data2$lnlot15<-(log(data3$sqft_lot15))
+data2$nord<-ifelse(data2$lat>median(data3$lat),1,0)
+data2$est<-ifelse(data2$long>median(data3$long),1,0)
+data2$nord<-as.factor(data2$nord)
+data2$est<-as.factor(data2$est)
+data2$lnprice<-(log(data3$price))
+data2$lnliv15<-(log(data3$sqft_living15))
+data2$lnabo<-(log(data3$sqft_above))
+data2$young<-ifelse(data2$yr_built>=1995,1,0)
+data2$young<-as.factor(data2$young)
+```
+
+```{r f_kable_opti}
+kable_opti <- function(tableau, digits = 2, transp = FALSE){
+  tableau_bis <- if (transp == TRUE) {
+                        tableau %>% t() # si transp == TRUE je transpose 
+                      } else {
+                       tableau 
+                      }
+  tableau_bis %>% 
+      kable(digits = digits) %>%
+      kable_styling(
+      full_width = FALSE,
+      position = "center",
+      bootstrap_options = c("striped", "hover", "condensed")
+      )
+}
+```
+
+# Introduction
+On étudie une base de données de `r nrow(data3)` biens immobiliers. On connaît `r ncol(data3)` caractéristiques concernant chaque bien : le numéro d'identification (id), la date de vente (date), le prix de vente (price), le nombre de chambres (bedrooms), le nombre de salles de bains (bathrooms), la taille (pièces et sous-sol) en pieds carrés (sqft_living), la taille du terrain en pieds carrés (sqft_lot), le nombre d'étages (floors), la présence d'une vue sur la mer ou pas (waterfront), le nombre de vues atypiques (views), la condition, une évaluation dont la description est inconnue (grade), la taille de l'habitacle en pieds carrés (sqft_above), la taille du sous-sol en pieds carrés (sqft_basement), l'année de construction (yr_built), l'année de rénovation s'il y en a une (yr_renovated codée 0 si le bien n'a pas été rénové), le code postal (zipcode), la latitude (lat), la londitude (long), la taille en 2015 en pieds carrés (sqft_living15) et la taille du terrain en 2015 en pieds carrés (sqft_lot15).
+
+L'objet de cette étude est d'essayer de développer le modèle le plus adéquat pour prédire le prix des biens immobiliers compte tenu des autres variables à notre disposition. Il faut savoir également que les données recueillies proviennent de la ville de Seattle (Etat de Washington aux Etats-Unis). Notre analyse portera donc sur cette ville en terme de prédiction des prix des biens immobiliers. 
+
+
+# Statistiques Descriptives
+
+La première étape de notre démarche consiste à observer nos données et nos différentes variables, à faire un premier tri qui nous servira ensuite de base solide pour la construction de nos modèles.
+
+Voici un bref aperçu de nos différentes variables : 
+```{r echo=FALSE, paged.print=TRUE}
+kable(head(data3, 4), format = "simple")
+```
+
+On peut déjà chercher à faire un tri parmi les variables afin de déterminer celles qui pourront nous aider pour notre étude. Les variables id, date et zipcode ne sont que des variables "d'identification" des biens, elles ne révèlent aucune information physique concernant le bien. On décide donc de créer une deuxième base de données sans ces variables.
+
+De plus, les variables price, sqft_living et sqft_lot prennent des valeurs très élevées et il peut étre intéressant de les passer en forme logarithmique pour observer les variations en pourcentage (élasticités). Par ailleurs, nous n'utiliserons que les variables sqft_living15 et sqft_lot15 car ce sont les variables actualisées en 2015 de sqft_living et de sqft_lot.
+
+Ainsi, toujours dans la deuxième base de données, nous ajoutons les variables lnprice, lnsqft_living15 et lnsqft_lot15.
+
+
+Commençons par étudier les variables prenant peu de modalités.
+
+## Bedrooms
+
+```{r}
+summary(data3$bedrooms)
+```
+
+La moyenne du nombre de chambres sur les 21 613 biens considérés est de 3.371 chambres par bien et la médiane est de 3 chambres par bien. On constate une habitation avec 11 chambres et une autre avec 33 chambres.
+
+Regardons la relation entre le nombre de chambres et le prix (log) des maisons.
+
+```{r , fig.height = 5.5, fig.width = 7,echo=TRUE}
+ggviolin(data2,x="bedrooms",y="lnprice",fill = "bedrooms",alpha = 0.6,add = "boxplot",add.params = list(fill = "white") )  + labs(title="Répartion des prix (log) en fonction du nombre de chambres",x="Nombre de chambres",y="Log(Prix)") + theme_bw()
+```
+
+On observe une tendance à la hausse des prix lorsque le nombre de chambres par habitation augmente.
+
+## Floors
+
+```{r}
+summary(data3$floors)
+```
+
+```{r, fig.height = 4.5, fig.width = 10}
+
+ggviolin(data2,x="floors",y="lnprice",fill = "floors",alpha = 0.6,add = "boxplot",add.params = list(fill = "white") ) + 
+  labs(fill = "Etages", title="Répartion des prix (log) en fonction du nombre d'étage", x = "Nombre d'étages", y = "Log(Prix)")+theme_bw() + theme(legend.position = "bottom")+
+  ggplot(data2, aes(x=floors, y=lnprice)) + geom_point(shape=16, fill="red", color="red", size=1) +
+  labs(title = "Prix (log) en fonction du nombre d'étages", 
+       subtitle = "",x = "Nombre d'étages", y = "Log(Prix)") + theme_bw()
+```
+
+Le nombre d'étage, qui exprime aussi une sorte de surface, semblerait être corrélé positivement avec les prix.
+
+## Condition
+
+```{r}
+summary(data3$condition)
+```
+
+La variable condition est une variable qui mesure sur une échelle de 1 à 5 l'état de la maison. La valeur 5 étant le meilleur état de la maison.
+
+```{r , fig.height = 4, fig.width = 5.5}
+ggviolin(data2,x="condition",y="lnprice",fill = "condition",alpha = 0.6,add = "boxplot",add.params = list(fill = "white") )  + labs(fill = "Condition", title="Répartion des prix (log) en fonction de l'état de la maison", x = "Condition", y = "Log(Prix)")+theme_bw()
+```
+
+Les maisons qui semblent être en bon et très bon état (de 3 à 5) présentent au vu du graphique des prix plus élevés. En revanche et dans cette même logique, des habitations qui sont en mauvais état présentent dans l'ensemble des prix plus faibles. Pour donner un exemple, la moyenne des prix des maisons en mauvais état (2) est de 327287.1\$ tandis que celle des biens en bon état (4) est de 521200.4\$
+
+
+Penchons nous maintenant sur les variables aux observations très étendues.
+
+## Taille du bien
+
+Il est naturel de vouloir explorer en premier le prix en fonction de la taille de l'espace habitable du bien (sqft_living15). Comme mentionné précédemment, on utilise les variables en forme logarithmique : 
+
+```{r , fig.height = 5, fig.width = 7}
+ggplot(data=data2, aes(x=lnliv15, y=lnprice)) + geom_point(size=0.8, color="blue")+ labs(title="Prix (log) en fonction de la surface habitable(2015) ", x = "Taille de la surface habitable(2015)", y = "Log(Prix)")+theme_bw()
+```
+
+À cause de la concentration de points trop importante, on peut effectuer un graphique en densité pour examiner en profondeur ce nuage de `r sum(nrow(data3))` points :
+
+```{r,echo=TRUE}
+ggplot(data2, aes(x=lnliv15, y=lnprice)) +
+  geom_hex(bins = 70) +
+  scale_fill_continuous(type = "viridis") +
+  labs(fill = "Densité", title="Prix (log) en fonction de la surface habitable(2015) ", x = "Taille de la surface habitable(2015)", y = "Log(Prix)")+theme_bw()
+```
+
+Ce graphique nous révèle que les points sont surtout concentrés entre 7 et 8 pour lnliv15 et entre 12 et 14 pour lnprice avec notamment une forte concentration autour de lnliv15 = 7.5 et lnprice = 13.
+
+### Décomposition de la surface habitable
+
+On sait également que sqft_living = sqft_above + sqft_basement. Cependant nous étudions la variable sqft_living15 et il s'avère que sqft_living et sqft_living15 sont différentes. On cherche à réaliser les mêmes graphiques avec sqft_above et sqft_basement afin d'observer ce qu'il s'y passe et de chercher malgré tout une information intéressante :
+
+```{r , fig.height = 5, fig.width = 9}
+ggplot(data=data2, aes(x=lnabo, y=lnprice)) + geom_point(size=0.8, color="blue")+ labs(title="Prix (log) en fonction de la taille sur-sol ", x = "Taille de la surface sur-sol", y = "Log(Prix)")+theme_bw()+
+  ggplot(data2, aes(x=lnabo, y=lnprice)) +
+  geom_hex(bins = 70) +
+  scale_fill_continuous(type = "viridis") +
+  labs(fill="Densité", title="Prix (log) en fonction de la taille sur-sol", x = "Taille de la surface sur-sol", y = "Log(Prix)")+theme_bw()+
+  theme(legend.position = "bottom")
+```
+
+Les points étant toujours très concentrés, on réalise également le graphique en densité.
+
+On constate ici que les points sont toujours concentrés entre 7 et 8 pour log(sqft_living) et entre 12 et 14 pour lnprice et une forte concentration de points se situe autour de log(sqft_above) = 7.2 et lnprice = 13.
+
+On souhaite également faire ces graphiques pour la variable sqft_basement. Cependant, la variable sqft_basement comporte `r sum(data2$sqft_basement==0)` zéros, soit `r round((sum(data2$sqft_basement==0)/sum(nrow(data2))*100),2)`% du total des valeurs initiales, ce qui pose donc problème. On peut en revanche tracer les mêmes graphiques mais en échelle semi-logarithique, c'est-à-dire avec seulement le prix en logarithme. Pour pouvoir comparer correctement nos variables, tous les graphiques utilisent l'échelle semi-logarithmique.
+
+```{r, fig.height = 5, fig.width = 14}
+ggplot(data2, aes(x=sqft_living15, y=lnprice) ) +
+  geom_hex(bins = 70) +
+  scale_fill_continuous(type = "viridis") + xlim(0,6000)+ylim(11,16)+
+  labs(fill="Densité", title="Prix (log) en fonction de la taille habitable(2015) ", x = "Taille de la surface habitable(2015)", y = "Log(Prix)") +theme_bw() +
+  theme(legend.position = "bottom")+
+  ggplot(data2, aes(x=sqft_above, y=lnprice) ) +
+  geom_hex(bins = 70) +
+  scale_fill_continuous(type = "viridis") +
+  xlim(0,6000)+ylim(11,16)+
+  labs(fill="Densité", title="Prix (log) en fonction de la taille sur-sol", x = "Taille de la surface sur-sol", y = "Log(Prix)")+theme_bw() +
+  theme(legend.position = "bottom")+
+  ggplot(data2, aes(x=sqft_basement, y=lnprice) ) +
+  geom_hex(bins = 70) +
+  scale_fill_continuous(type = "viridis") +
+  xlim(0,6000)+ylim(11,16)+
+  labs(fill="Densité", title="Prix (log) en fonction de la taille sous-sol", x = "Taille de la surface sous-sol", y = "Log(Prix)")+theme_bw()+theme(legend.position = "bottom")
+```
+
+On constate ici une grosse différence entre sqft_above et sqft_basement, notamment la concentration très élévée autour de sqft_basement=0, ce qui rejoint notre propos précédent, stipulant que `r round((sum(data2$sqft_basement==0)/sum(nrow(data2)))*100, 2)`% du total des valeurs initiales de sqft_basement sont nulles, ce qui signifie que `r round((sum(data2$sqft_basement==0)/sum(nrow(data2)))*100,2)`% des biens étudiés n'ont pas de sous-sols, , comme mentionné précédemment
+
+On va désormais recoder la variable sqft_basement en une variable catégorielle 0/1 : on appelle cette variable "basement" : basement = 0 signifie que le bien n'a pas de sous-sol tandis que basement = 1 signifie que le bien possède un sous-sol.
+
+```{r,echo=TRUE}
+data2$basement <- data2$sqft_basement
+data2$basement[data2$basement!=0] <- 1
+data2$basement <- as.factor(data2$basement)
+```
+
+Un simple graphique nous permet d'observer la répartition du prix (log) suivant la présence ou non d'un sous-sol. Une nuance importante est à rappeler car, comme nous l'avons mentionné,`r sum(data2$basement==1)`  biens possèdent un sous-sol alors que `r sum(data2$basement==0)`  n'en possèdent pas.
+
+```{r}
+ggplot(data2, aes(x=as.factor(basement), y=lnprice) ) + geom_boxplot(aes(fill = basement))+ scale_fill_discrete(name = "Présence d'un sous-sol", labels = c("Non", "Oui")) + labs(title = "Répartion des prix (log) en fonction d'un sous-sol", x = "Présence d'un sol", y = "Log(Prix)")+ theme_bw()
+```
+
+Cette dimension est importante pour notre étude puisqu'on va chercher à déterminer si la présence d'un sous-sol a un impact significatif sur le prix des biens en questions.
+
+### Décomposition de la surface totale
+
+Dans cette partie, on va se concentrer sur sqft_lot15. Une taille de terrain plus importante est-elle associée à un prix plus élevé ?
+
+Dans un premier temps, on représente simplement le nuage de points :
+
+```{r , fig.height = 5, fig.width = 9}
+ggplot(data=data2, aes(x=lnlot15, y=lnprice)) + geom_point(size=0.8)+ labs(title="Prix (log) en fonction de la taille du jardin(2015) ", x = "Taille du jardin(2015)", y = "Log(Prix)")+theme_bw()+
+  ggplot(data2, aes(x=lnlot15, y=lnprice)) +
+  geom_hex(bins = 70) +
+  scale_fill_continuous(type = "viridis") +
+  labs(fill="Densité", title="Prix (log) en fonction de la taille du jaridn(2015) ", x = "Taille du jardin(2015)", y = "Log(Prix)")+theme_bw()+
+  theme(legend.position = "bottom")
+```
+
+Et encore une fois, à cause de l'overplotting, c'est-à-dire du nombre trop important de points, on peut observer la densité.
+
+On observe une forte concentration autour de log(sqft_lot15)=9 et entre lnprice=12 et lnprice=14.
+
+## Etude du territoire
+
+Graphique du territoire :
+
+![](image.png){width=10000}
+
+
+
+```{r,fig.width = 8}
+ggplot(data=data2, aes(x=long, y=lat)) + geom_point(size=0.75) + geom_hline(yintercept=median(data3$lat), color="red", size=1) + geom_vline(xintercept=median(data3$long), color="red", size=1) + theme_bw() + 
+ annotate(geom="text", x= -121.6, y=47.7, label="Nord-Est \n n = 6109",
+              color="red") +
+ annotate(geom="text", x= -122.5, y=47.7, label="Nord-Ouest \n n = 4693",
+              color="red") +
+ annotate(geom="text", x= -121.6, y=47.2, label="Sud-Est \n n = 4719",
+              color="red") +
+ annotate(geom="text", x= -122.5, y=47.2, label="Sud-Ouest \n n = 6092",
+              color="red") +
+  labs(title = "Répartition des biens sur le territoire étudié" ,subtitle = "", x = "Longitude", y="Latitude")
+```
+
+Les deux lignes rouges qui marquent le découpage représentent les médianes respectives en fonction de la longitude et de la latitude. 
+
+`r sum(data2$long>=-121.5)` biens sont au-delà de la longitude -121.50. On ne les représentera pas sur nos prochains graphiques, dans un soucis de présentation, mais ils seront utilisés dans nos modèles.
+
+On observe la répartion du prix (log) des maisons sur le territoire étudié :
+
+```{r,echo=TRUE}
+ggplot(data=data2, aes(x=long, y=lat, col=lnprice)) + geom_point(size=0.8) +  scale_color_gradientn(name = "Prix(log)", colours = hcl.colors(7)) +
+  labs(title = "Répartition des biens, superposée avec la répartition des prix(log)",
+subtitle = "",x = "Longitude", y="Latitude")+theme_bw()+ xlim(-122.55,-121.6)
+```
+
+Ce graphique est très intéressant, on constate une différence entre le Nord et le Sud. Les prix des biens immobiliers semblent plus élevés au Nord.
+
+Une rapide recherche nous indique que, d'après les données observées, les quartiers les plus aisés sont le centre de Seattle, le quartier de Bellevue et Mercer Island.
+
+De plus, on peut regarder le prix et la taille des biens suivant leur latitude (plus ou moins au Nord).
+
+```{r}
+ggplot(data=data2, aes(y=lnprice, x=lnliv15, color=lat)) + geom_point(size = 0.8)+ scale_color_gradientn(name = "Latitude", colours = hcl.colors(7)) +
+  labs(title = "Répartition prix (log)/ surface habitable, superposée avec la latitude", subtitle = "",
+       x = "Espace habitable (log)", y="Prix (log)" ) + theme_bw()
+```
+
+On remarque que pour des prix (log) plus faibles, la part de biens situés au Sud est plus élevée tandis que pour des prix (log) plus élevés, la part de biens situés au Nord est cette fois-ci plus élevée.
+
+```{r}
+ggplot(data=data2, aes(y=lnprice, x=nord, color=nord)) + geom_point(size=0.85) +
+  labs(fill = "Vue sur la mer" ,title = "Répartition des biens, selon leur position Nord/Sud", subtitle = "", x = "Longitude", y="Latitude" ) + 
+  scale_colour_manual(name = "Position", values=c("0"="orange", "1"="purple"), labels = c("Sud", "Nord")) + theme_bw()
+```
+
+Nous nous servons également de ces graphiques pour simplifier l'étude de ces variables de localisation. Ainsi nous avons créé une variable catégorielle représentant le Nord et le Sud, qui prend 1 pour le Nord et 0 pour le Sud. Ce découpage s'est effectué par rapport à la médiane des habitations en fonction de la latitude, qui grâce aux schémas nous a paru correct.
+
+
+## Waterfront
+
+C'est une variable catégorielle qui vaut 1 si le bien a une vue sur un point d'eau et 0 s'il n'en a pas.
+
+
+```{r,echo=TRUE}
+data2$waterfront<-as.factor(data3$waterfront)
+```
+
+```{r , fig.height = 4, fig.width = 7}
+ggviolin(data2,x="waterfront",y="lnprice",fill = "waterfront",alpha = 0.6,add = "boxplot",add.params = list(fill = "white") ) + scale_fill_manual(values=c("0"="skyblue", "1"="red"), name = "Vue sur point d'eau", labels = c("Non", "Oui")) + labs(title="Répartion des prix (log) en fonction d'une vue ou non sur un point d'eau", x = "Vue sur point d'eau", y = "Log(Prix)")+ theme_bw()
+```
+
+Seulement 163 biens ont une vue sur la mer, ce qui représente 0,7% des biens. Mais quand ceux-ci ont cette vue sur la mer, le prix paraît nettement plus élevé. 
+
+On montre ces 163 biens sur la carte.
+
+```{r}
+ggplot(data=data2, aes(y=lat, x=long, color=waterfront)) + geom_point(size=0.85) +
+  labs(title = "Répartition des biens, avec vue ou pas sur la mer", subtitle = "", x = "Longitude", y="Latitude" ) + theme_bw() + 
+  scale_colour_manual(name = "Vue sur point d'eau", values=c("0"="skyblue", "1"="red"), labels = c("Non", "Oui")) + xlim(-122.55,-121.6)
+```
+
+## View
+
+La variable View représente le nombre de vues "spéciales" observables depuis l'habitation. Elles vont de 0 à 4.
+
+```{r}
+summary(data3$view)
+```
+
+
+```{r, fig.height = 6, fig.width = 11}
+
+ggplot(data=data2, aes(x=view)) + 
+  geom_histogram(shape=16, fill="gold", size=1) + 
+  labs(title = "Effectifs maisons/ nombre de vues spéciales",subtitle = "", x = "Nombre de vues spéciales", y = "Effectifs")+ theme_bw() +
+ggplot(data=data2, ) + 
+  geom_point(aes(x=view, y=lnprice), shape=16, fill="blue", color="red", size=1) + 
+  labs(title = "Prix (log) en fonction du nombre de vues spéciales", subtitle = "",x = "Nombre de vues spéciales", y="Log(Prix)")+ theme_bw()
+
+```
+
+Sur l'histogramme, on voit d'abord que la majorité des maisons n'ont pas de vue spéciale, après calculs on trouve que cela représente environ 90% des biens immobiliers. De plus sur les 10% de biens restants, on observe sur le graphique de droite qu'il y a une tendance à l'augmentation du prix avec l'augmentation du nombre de vues spéciales.
+
+```{r}
+ggplot(data=data2, aes(x=long, y=lat, col=view)) + geom_point(size=0.9) +  scale_color_distiller(name = "Vue", palette = "Spectral") +
+  labs(fill = "Prix" ,title = "Répartition des biens, superposée avec la répartition des prix(log)",
+subtitle = "",x = "Longitude", y="Latitude")+theme_bw()+ xlim(-122.55,-121.5)
+```
+
+
+
+# Tests
+
+Après avoir exploré succintement les relations entre le prix et les autres variables, on va chercher à construire un modèle permettant d'obtenir une bonne prédiction du prix. L'objectif des sous-sections est de tester si une variable apporte réellement une information à propos du prix. 
+
+## Modèle avec lnliving15
+
+On commence avec un modèle basique qu'on va enrichir par la suite. 
+
+Pour notre modèle de base, on sélectionne la variable log(sqft_living15), qu'on va nommer lnliv15 dans la suite de l'étude. Bien qu'arbitraire, ce choix s'avère assez basique car en effet, se dire que la taille d'un bien donne une information intéressante à propos du prix de ce même bien paraît naturel.
+
+Il faut cependant apporter quelques nuances quant à cette variable. On pourrait contraindre une ordonnée à l'origine nulle pour notre modèle. En effet, il paraît intéressant de se dire que si la taille du bien est nulle, alors les autres caractéristiques n'ont pas lieu d'être et que par conséquent, le prix vaut zéro. Cette démarche pourrait cependant générer un biais supplémentaire dans notre modèle (ce modèle est étudié dans l'annexe).
+
+Cependant nous ne possédons que des données sur une plage de valeurs restreinte : sqft_living15 est entre 399 et 6210, log(sqft_living15) est entre 5.988961 et 8.733916. Price est entre 75000 et 7700000 et Log(Price) est entre 11.22524 et 15.85673. Il faut donc être prudent car la forme logarithmique va avoir tendance à regrouper les valeurs. 
+
+Des graphiques peuvent bien représenter ce problème :
+
+```{r fig.width = 14}
+ggplot(data2, aes(x = sqft_living15, y = price)) + geom_point(size = 0.85, color = "blue") + labs(x = "Surface habitable", y = "Prix", title = "Prix en fonction de la surface habitable") + xlim(0,6000) + theme_bw() +
+  ggplot(data2, aes(x = sqft_living15, y = lnprice)) + xlim(0,6000) + ylim(0,16) + labs(x = "Surface habitable", y = "Log(Prix)", title = "Log(Prix) en fonction de la surface habitable") +
+  geom_point(size = 0.85,color = "skyblue") + theme_bw()+
+  ggplot(data2, aes(x = lnliv15, y = lnprice)) + xlim(0,9) + ylim(0,16) + geom_point(size = 0.85,color = "navy")+ labs(x = "Log(Surface habitable)",y= "Log(Prix)", title = "Log(Prix) en fonction de la Log(surface habitable)")+theme_bw()
+```
+
+Le modèle qu'on va chercher à développer sera construit avec la plage de valeurs étudiées. On cherche à développer un modèle utile pour prédire le prix associé à des tailles appartenant à la même plage de valeurs. On ne dispose pas d'information concernant des surfaces habitables en dehors de cette plage, il ne serait donc pas adéquat de chercher à prédire un prix lié à de telles valeurs.
+
+On teste donc la variable lnliv15, en gardant en tête les différentes nuances qu'on a soulévées.
+
+On choisit l'option de ne pas contraindre la constante à zéro afin d'assurer un biais plus faible (voir annexe).
+
+-    Log(Prix) ~ Log(SurfaceHabitable)    (1)
+
+```{r,echo=TRUE}
+t4<-lm(lnprice~lnliv15,data = data2)
+export_summs(t4, model.names = c("(1)"))
+```
+
+Les résultats de cette régression nous indiquent que lorsque la taille de l'habitacle augmente de 1%, le prix augmente de 0.98%. De plus, l'écart-type de l'estimateur de lnliv15 est très faible (0.07) et la p-value associée est également très faible (< 0.001). Par conséquent, le coefficient associé à lnliv15 est significativement différent de 0 dans ce premier modèle.
+
+
+## Modèle avec lnlot15
+
+Dans la partie précédente, on a testé la variable lnliv15 et on en a conclu qu'elle était significative. On continue notre modèle en ajoutant simplement la variable sqft_lot15, nommée lnlot15. On cherche à savoir si la taille du jardin apporte ou non une information intéressante.
+
+  -  Log(Prix) ~ Log(SurfaceHabitable)                        (1)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Log(SurfaceJardin)   (2)
+
+```{r}
+t5<-lm(lnprice~lnliv15+lnlot15,data = data2)
+kable(vif(t5), col.names = c("VIF"))
+export_summs(t4, t5, model.names = c("(1)","(2)"))
+```
+
+On regarde dans un premier temps le VIF afin de détecter la présence ou non de colinéarité entre les 2 variables lnliv15 et lnlot15.
+On constate qu'il est de 1.162, ce qui est plutôt faible.
+
+Plusieurs choses sont à observer dans ce modèle : le coefficient de lnlot15 s'avère négatif, en effet une augmentation de 1% de la taille du jardin nous informe d'une diminution de 0.078% du prix. De plus, on constate que le coefficient de lnliv15 augmente, sans pour autant diminuer en écart-type (il reste inchangé). Rajouter la variable lnlot15 nous a donc permis d'avoir une meilleure information concernant lnliv15.
+
+Un autre commentaire peut être fait à propos du R² ajusté. L'ajout de lnlot15 a fait augmenter le R² ajusté, mais d'une ampleur bien plus faible que lnliv15.
+
+## Modèle avec localisation
+
+Après avoir analysé les variables concernant la taille du bien, on se concentre maintenant sur la localisation du bien. On a découpé la carte en 4 secteurs : Nord-Ouest, Nord-Est, Sud-Ouest, Sud-Est. On cherche à déterminer si la localisation du bien apporte une information utile à propos du prix. En effet, on peut penser que le prix est différent selon les quartiers dans lesquels se trouve le bien considéré, on va donc tester cette hypothèse.
+
+On teste ici plusieurs modèles : dans un premier temps nous allons tester individuellement si les variables Nord et Est permettent d'apporter une information significative du prix. Puis dans un second temps nous allons incorporer ces deux variables une par une dans notre notre modèle initial afin de tester leur pertinence vis-à-vis des variables lnliv15 et lnlot15 déjà présentes. Finalement, nous allons tester un modèle plus global dans lequel les variables Nord et Est sont ajoutées en même temps. 
+
+On teste individuellement la variable Nord et la variable Est.
+
+  -  Log(Prix) ~  Nord        (1)
+  -  Log(Prix) ~  Est         (2)
+
+```{r}
+t6_1<-lm(lnprice~nord,data = data2)
+t6_2<-lm(lnprice~est,data = data2)
+export_summs(t6_1, t6_2, model.names = c("(1)","(2)")) 
+```
+
+D'après le modèle avec Nord, le prix des biens situés au Nord est en moyenne supérieur de 48% par rapport au prix des biens situés au Sud. Ce résultat est très fort, en effet cela signifie que, d'après ce modèle, les biens situés au Nord sont en moyenne presque 1.5 fois plus chers que ceux situés au Sud.
+
+Concernant le modèle avec Est, celui-ci nous dit que le prix des biens situés à l'Est est en moyenne de 9% par rapport au prix des bien situés à l'Ouest. Bien qu'on observe une hausse, celle-ci est moins flagrante que celle liée à la différence Nord/Sud. On observe ici un R² ajusté de 0.01.
+
+
+```{r, fig.height = 4, fig.width = 10,echo=TRUE}
+ggplot(data=data2, aes(x=nord, y=lnprice, col=nord)) + 
+  geom_point(size=0.85) + 
+  stat_summary(geom = "line", fun = mean, group = 1, col="purple") +
+  labs(title = "Régression du prix (log) des biens, selon Nord/Sud", subtitle = "", x = "Nord", y="Log(Prix)") +
+  scale_colour_manual(name = "Position", values=c("0"="orange", "1"="purple"), labels = c("Sud", "Nord")) + theme_bw()+ theme(legend.position = "bottom")+
+  ggplot(data=data2, aes(x=est, y=lnprice, col=est)) + 
+  geom_point(size=0.85) + 
+  stat_summary(geom = "line", fun = mean, group = 1, col="purple") +
+  labs(title = "Régression du prix (log) des biens, selon Est/Ouest", subtitle = "", x = "Est", y="Log(Prix)" ) +
+  scale_colour_manual(name = "Position", values=c("0"="red", "1"="blue"), labels = c("Ouest", "Est")) + theme_bw()+ theme(legend.position = "bottom")
+```
+
+Nous allons désormais intégrer au modèle initial les deux variables que nous venous d'analyser, séparément puis simultanément.
+
+On intègre les variables Nord et Est au modèle initial séparément et on compare trois modèles :
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Log(SurfaceJardin)   (1) 
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Log(SurfaceJardin) + Nord    (2)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Log(SurfaceJardin) + Est   (3) 
+  
+```{r}
+t7_1<-lm(lnprice~lnliv15+lnlot15+nord,data = data2)
+t7_2<-lm(lnprice~lnliv15+lnlot15+est,data = data2)
+export_summs(t5, t7_1, t7_2, model.names = c("(1)", "(2)", "(3)"))
+```
+
+En observant le modèle avec Nord (1), lnliv15 donne le plus d'information conernant le prix, quand la taille de l'habitacle augmente de 1%, le prix augmente de 0.96%, ce qui se rapproche des deux premiers modèles que nous venons d'étudier. On constate ensuite que la variable lnlot15 diminue l'information obtenue précédemment, on passe de -0.08 à -0.03.Et concernant la variable Nord, ce modèle indique que le prix des biens situés au Nord est en moyenne 42% plus élevé que les biens situés au Sud. 
+Tous les paramètres sont significativement différents de zéro. Et le R² ajusté augmente de 0.16 et passe à 0.54.
+
+Le modèle avec Est (2) révèle des éléments intéressants : le coefficient de lnliv15 est plus élevé, le coefficient de lnlot15 est plus faible, plus proche de zéro mais surtout, le coefficient associé à la variable Est devient négatif. Alors qu'avant on avait une augmentation de 9% du prix des biens situés à l'Est par rapport à ceux situés à l'Ouest, on a désormais l'inverse d'après ce modèle. Les biens situés à l'Est seraient en moyenne 15% MOINS chers que ceux situés à l'Ouest selon notre modèle. Cette différence s'explique par le fait que dans le premier petit modèle avec Est, étant donné que la variable "Est" est la seule variable explicative du modèle, elle incorpore les effets des autres variables. Mais quand on considère lnliv15, on dissocie les effets des deux variables et on constate que d'après notre modèle, la variable Est informe en réalité une diminimution du prix.
+
+Le R² ajusté augmente de 0.02 et passe à 0.40.
+
+### Ajout des deux variables Nord et Est
+
+Nous ajoutons enfin les deux variables simultanément dans le modèle.
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Log(SurfaceJardin) + Nord + Est    (1)
+
+```{r}
+t8<-lm(lnprice~lnliv15+lnlot15+nord+est,data = data2)
+export_summs(t8, model.names = c("(1)"))
+```
+
+L'information donnée par lnlot15 devient de plus en plus faible dans notre modèle. Suite aux différents modèles qu'on a pu faire, on décide d'écarter la variable lnlot15 car elle ne donne qu'une faible information concernant la variation du prix. 
+La variable Est quant à elle reste négative et apporte peu d'information, on décide de garder uniquement la variable Nord car on préfère se focaliser sur une seule variable de localisation pour le moment.
+
+## Modèle avec les chambres
+
+On continue notre recherche en considérant les chambres et les salles de bain. Comme les modèles précédents, on va intégrer nos variables étape par étape.
+
+On compare trois modèles :
+
+  -  Log(Prix) ~ NombreDeChambres    (1)
+  -  Log(Prix) ~ SurfaceHabitable + NombreDeChambres   (2)
+  -  Log(Prix) ~ SurfaceHabitable + NombreDeChambres + NombreSallesBain   (3)
+
+```{r}
+t9_1<-lm(lnprice~bedrooms,data = data2)
+t9_2<-lm(lnprice~bedrooms+lnliv15,data = data2)
+t9_3<-lm(lnprice~lnliv15+bathrooms+bedrooms,data = data2)
+export_summs(t9_1,t9_2, t9_3, model.names = c("(1)", "(2)", "(3)"))
+```
+
+Dans le modèle (1) avec bedrooms en tant qu'unique régresseur, le coefficient incorpore les variations des autres variables, et on constate dans le modèle (2) que ce coefficient diminue lorsqu'on ajoute lnliv15, signifiant bien que 0.19 dans le modèle (1) inclut également les variations de lnliv15. Ceci est confirmé par le modèle (3), dans lequel le coefficient de bedrooms devient très faible tandis que celui de bathrooms est quant à lui plus élevé, montrant bien le fait que dans les modèles (1) et (2), bedrooms "mesurait" également la variation de bathrooms.
+
+Avec cette forme fonctionnelle, la variable bedrooms ne révèle que peu d'information à propos des variations de la variable prix (log). C'est pourquoi on décide de sélectionner uniquement la variable bathrooms, elle nous apporte en effet plus d'information dans notre modèle.
+
+
+## Modèle avec le sous-sol
+
+La variable basement étant codée 0/1, elle nous permet de tester s'il existe une différence significative de prix entre les maisons possédant un sous-sol et les maisons n'en possédant pas.
+
+  -  Log(Prix) ~ Sous-Sol   (1)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Sous-Sol   (2)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Sous-Sol + NombreDeChambres + NombreSallesBain   (3)
+
+```{r}
+tb<-lm(lnprice~basement,data = data2)
+tb2<-lm(lnprice~lnliv15+basement,data = data2)
+tb3<-lm(lnprice~lnliv15+bathrooms+bedrooms+basement,data=data2)
+export_summs(tb,tb2,tb3, model.names = c("(1)", "(2)", "(3)"))
+```
+
+Les différences entre les trois modèles ci-dessus sont plutôt bénines concernant la variable basement. Même lorsque l'on rajoute lnliv15, le coefficient diminue peu. Le modèle (3) nous informe que les biens possédant un sous-sol seraient en moyenne 15% plus chers que les biens n'en possédant pas. On remarque également que bedrooms nous donne une information très faible, par conséquent on décide de ne pas la prendre en compte pour la suite de notre analyse.
+
+## Modèle avec révovation
+
+```{r,echo=TRUE}
+data2$renov<-ifelse(data2$yr_renovated>0,1,0)
+data2$renov<-as.factor(data2$renov)
+```
+
+Nous avons créé une variable catégorielle traduisant si le bien a été rénové ou non. Ensuite nous faisons quelques régressions avec cette variable et d'autres que l'on a déjà testé. Si le bien a été rénové, la variable vaut 1, s'il n'a pas été rénové la variable vaut 0. On teste donc si la rénovation peut apporter une information pertinente pour prédire le prix.
+
+  -  Log(Prix) ~ Rénovation   (1)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Rénovation   (2)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Rénovation + NombreSallesBain + Nord   (3)
+
+```{r}
+tr<-lm(lnprice~renov,data = data2)
+tr2<-lm(lnprice~lnliv15+renov,data = data2)
+tr3<-lm(lnprice~lnliv15+bathrooms+renov+nord,data=data2)
+export_summs(tr,tr2,tr3, model.names = c("(1)", "(2)", "(3)"))
+```
+
+Les résultats de ces trois premiers tests et de ce graphique semblent montrer que les biens qui ont été rénovés ont une influence positive sur les prix. En effet, les estimateurs sont significativement différents de 0 au seuil de 1%, de plus ils sont autour de 0,23/0,3 ce qui signifie par exemple pour le modèle (3), si le bien est rénové, alors en moyenne le prix est supérieur de 22% par rapport à un bien non rénové et toutes choses égale par ailleurs. 
+
+```{r, fig.height=4, fig.width=5}
+ggplot(data=data2, aes(x=renov, y=lnprice, col=renov)) + 
+  geom_point(size= 0.85) + 
+  stat_summary(geom = "line", fun = mean, group = 1, col="purple") +
+  labs(title = "Régression du prix (log) des biens, selon rénovation", x = "Rénové", y="Log(Prix)") +
+  scale_colour_manual(name = "Rénové", values=c("0"="black", "1"="red"), labels = c("Non", "Oui")) + theme_bw()+ theme(legend.position = "bottom")
+```
+
+
+##  Modèle avec view/waterfront
+
+Cette relation nous paraît intéressante à etudier car *a priori* si le bien a une vue sur un plan d'eau, alors il aura sûrement 3 ou 4 "vues spéciales" à l'intérieur du bien, toutes donnant sur le plan d'eau (3 fenêtres). Avec la répartition de nos logements, on retrouve bien d'une part la forme de Seattle et de ses alentours. D'autre part on voit bien que beaucoup de logements qui sont au bord de l'eau ont plusieurs "vues spéciales", ce qui est en accord avec le graphique qui montre la localisation des biens avec vue sur la mer (partie "Statistiques descriptives").
+
+Regardons un peu ce qu'il se passe si nous faisons une régression auxiliaire entre view et waterfront.
+
+  -  VueSpéciale ~ VueEau   (1)
+
+```{r,echo=TRUE}
+tw<-lm(view~waterfront,data=data2)
+export_summs(tw, model.names = c("(1)"))
+```
+
+Le coefficient estimé de waterfront est de 3.56, on interprète cela de la manière suivante: si le bien présente une vue sur un plan d'eau, alors en moyenne le bien a 3.77 "vues spéciales", contre 0.21 si celui-ci n'a pas de vue sur un plan d'eau. Cela est cohérent avec le fait aussi que 90% des maisons n'ont pas de vue spéciale. De plus le coefficient est élevé car le nombre le plus élevé de vues spéciales par bien est de 4, ce qui traduit bien le fait que dès qu'un bien a une vue sur un plan d'eau, alors automatiquement le bien aura en moyenne plusieurs "vues spéciales". 
+
+# Les modèles principaux
+
+Avec la première partie "Statistiques descriptives" et la seconde "Tests", nous avons une meilleure idée et une intuition plus exacte de ce qui pourrait expliquer le prix des biens immobiliers, notamment la variation du prix. Nous allons dans cette section présenter trois modèles qui nous paraissent les plus pertinents pour notre analyse. Nous allons partir d'un modèle simple à trois variables, un modèle intermédiaire à cinq variables et un modèle final à huit variables. Nous analyserons plus en détail ces modèles.
+
+## Premier modèle
+
+Nous partons avec un modèle condensé de trois variables primordiales à notre sens pour pouvoir expliquer au minimum le prix des biens immobiliers. Il est composé d'une variable mesurant la surface habitable (lnliv15), une variable montrant si le bien se situe plus au Nord ou au Sud de la région et enfin la variable waterfront qui montre si le bien a une belle vue sur un plan d'eau. Effectuons le test de régression :
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Nord + VueEau    (1)
+
+```{r,echo=TRUE}
+to1<-lm(lnprice~lnliv15+nord+waterfront,data = data2)
+export_summs(to1, model.names = c("(1)"))
+```
+
+Concernant l'analyse on peut noter que :
+
+- Les estimateurs sont tous significativement différents de 0 au seuil de 1%, donc les variables contribuent à l'explication du prix des bien immobiliers.
+
+- Prenons l'exemple de la variable Nord, si le bien se situe au Nord de la région, alors en moyenne les prix seront significativement plus élevés de 43,5% par rapport à un logement au Sud, selon notre découpage et toutes choses égale par ailleurs. On a en effet pu remarquer sur nos cartes que le centre et la ville de Seattle se situait plus au nord de la région par rapport à tous les biens de la base de données.
+
+- Le modèle est globalement significatif au seuil de 1%.
+
+- Le R² ajusté pour ce modèle à trois variables est de 0,554.
+
+## Deuxième modèle
+
+À notre premier modèle, nous rajoutons la variable "bathrooms" et la variable dummy "renov" qui vaut 1 si le bien a été rénové et qui vaut 0 dans le cas contraire. Effectuons le test de régression :
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Nord + VueEau + Rénovation + NombreSallesBain    (1)
+
+```{r,echo=TRUE}
+to2<-lm(lnprice~lnliv15+nord+bathrooms+waterfront+renov,data = data2)
+export_summs(to2, model.names = c("(1)"))
+```
+
+Notre modèle gagne en précision et en justesse d'interprétation, on a rajouté deux variables supplémentaires afin de mieux dissocier les effets de chaque variable et mieux expliquer le prix des biens immobiliers.
+
+
+## Modèle final
+
+Le dernier modèle est plus fin, contenant assez de variables pour pouvoir expliquer correctement le prix des biens sur un ensemble assez large de critères. On ajoute par rapport au modèle précédent, les variables young (récent/pas récent), basement (oui/non) et condition. 
+
+ -  Log(Prix) ~ Log(SurfaceHabitable) + Nord + VueEau + Rénovation + NombreSallesBain + Young + Sous-Sol + Condition    (1)
+
+```{r,echo=TRUE}
+to6<-lm(lnprice~lnliv15+nord+bathrooms+waterfront+renov+condition+basement+young,data = data2)
+export_summs(to6, model.names = c("(1)"))
+```
+
+Quelques points sur cette régression, que nous développerons plus dans la synthèse finale :
+
+- Ajout de la variable dummy "young" qui vaut 1 si le bien a été construit dans l'année 1995 et après. Elle vaut 0 dans le cas contraire. C'est un choix que l'on fait afin de simplifier la lecture, et le découpage nous a paru significatif au vu de la différence de moyenne des prix selon les groupes.
+
+- Tous les coefficients estimés sont significativement différents de 0 au seuil de 1%, les variables ont une influence significative sur le prix des biens. Ces coefficients sont tous positifs, donc c'est une influence qui tend à augmenter le prix des biens immobiliers.
+
+- Le nombre de chambre dans ce modèle avait un coefficient très faible (<0.01), c'est pour cela que l'on n'inclut pas cette variable.
+
+- On a essayé de balayer un peu tous les facteurs explicatifs de cette base de données en choisissant les variables selon nous les plus pertinentes pour chaque catégorie de variable (par exemple les différentes surfaces). On a tenu compte de la localisation, de la surface, de l'ancienneté, de l'état du bien ainsi que de la vue.
+
+
+```{r, fig.height=4, fig.width=5}
+ggplot(data=data2, aes(x=young, y=lnprice, col=young)) + 
+  geom_point(size = 0.85) + 
+  stat_summary(geom = "line", fun = mean, group = 1, col="purple")  +
+  labs(title = "Régression du prix (log) des biens, selon l'âge", x = "Récent", y="Log(Prix)") +
+  scale_colour_manual(name = "Récent", values=c("0"="chocolate3", "1"="darkolivegreen3"), labels = c("Non", "Oui")) + theme_bw()+ theme(legend.position = "bottom")
+```
+
+# Analyse des résidus et des modèles
+
+Nous allons vérifier que l'on respecte bien les hypothèses de base d'une regression linéaire (estimée avec les Moindres Carrés Ordinaires). Nous devons vérifier si notre modèle ne rencontre pas des problèmes comme de la non linéarité, de l'hétéroscedasticité, ou encore la présence de résidus trop élevés. Ces graphiques seront parfois accompagnés de tests statistiques pour affirmer ou infirmer nos observations.
+
+Présentation des 4 graphiques principaux : 
+
+- Residuals vs Fitted : Il affiche les résidus en ordonnée et la valeur prédite par le modèle en abscisse. Normalement l'erreur doit être indépendante des valeurs prédites, donc les points doivent se distribuer autour de 0 de façon aléatoire. La ligne de regression doit être horizontale en théorie.
+
+- Normal Q-Q : Ce graphique nous renseigne sur la distribution normale des résidus. Il affiche la distribution des résidus (normalisés) par quantiles. La ligne indique la répartition que les résidus doivent suivre s'ils sont normaux.
+
+- Scale-Location : Ce graphique est du même type que le premier, il représente l'ecart-type des résidus en fonction de la valeur prédite. Cela nous permet de vérifier l'hypothèse d'homoscedasticité, qui doit conduire à une ligne horizontale.
+
+- Residuals vs leverage : Ce graphique nous permet de visualiser les valeurs "outliers" qui impactent la régression, c'est-à-dire la présence de résidus trop grands par rapport à nos valeurs.
+
+Nous afficherons également d'autres graphiques alternatifs qui nous permettent de bien visualiser ces choses.
+
+## Modèle 1
+
+```{r, fig.height=7, fig.width=9,echo=TRUE}
+par(mfrow=c(2,2)); plot(to1)
+```
+
+
+- Graphique 1, linéarité
+
+Le premier graphique nous renseigne sur la linéarité des données. L'erreur ne doit pas être corrélée à la valeur prédite. La ligne rouge de régression devrait donc être horizontale. Or on observe que ce n'est pas le cas pour les valeurs faibles. Le test de Rainbow permet de tester la linéarité des données :
+
+```{r,echo=TRUE}
+rto1<-raintest(to1)
+into1<-c(rto1$statistic,rto1$p.value)
+names(into1)<-c("Rainbow","P-value")
+kable_opti(into1,transp = T) %>% add_header_above(header = c("Résultats du test de Rainbow"=2))
+```
+
+- P-value inférieure au seuil de 5%, on rejette l'hypothèse nulle de linéarité des données.
+
+- Remarques : 1) En fonction de la forme prise par la courbe, différentes transformation des données peuvent être effectuées, par exemple une transformation polynomiale. 2) Même si la vraie relation n'est pas linéaire, un bon ajustement linéaire peut être obtenu sur un sous-échantillon au "milieu" des données. L'hypothèse nulle est rejetée chaque fois que l'ajustement global est nettement moins bon que celui du sous-échantillon.
+
+
+- Graphique 2, permet d'étudier la normalité des résidus.
+
+Si les résidus sont distribués normalement, ils doivent se distribuer selon la ligne en pointiés. On observe qu'aux valeurs extrêmes, les résidus s'en éloignent. Le test de Jarque Bera est l'un des tests qui vérifie la normalité des résidus : 
+
+```{r,echo=TRUE}
+jto1<-jarque.bera.test(residuals(to1))
+jnto1<-c(jto1$statistic,jto1$p.value)
+names(jnto1)<-c("Jarque Bera","P-value")
+kable_opti(jnto1,transp = T) %>% add_header_above(header = c("Résultats du test de Jarque Bera"=2))
+```
+
+- P-value proche de 0, rejet de l'hypothèse nulle de normalité des résidus, ce qui confirme nos observations.
+
+- La distribution observée n'est pas compatible avec une distribution théorique normale.
+
+- Graphique 3, homogénéité de la variance des résidus.
+
+Normalement, la variance des résidus est indépendante de la valeur prédite par le modèle. Si le modèle est correct, la ligne verte ci-dessous doit être horizontale. On observe clairement que ce n'est pas le cas. Vérifions cette hypothèse avec le test de Breush-Pagan.
+
+```{r, fig.height = 5, fig.width = 6,echo=TRUE}
+plot(check_heteroskedasticity(to1))
+```
+
+Test de Breush-Pagan :
+
+```{r,echo=TRUE}
+bto1<-bptest(to1)
+bnto1<-c(bto1$statistic,bto1$p.value)
+names(bnto1)<-c("Breush-Pagan","P-value")
+kable_opti(bnto1,transp = T) %>% add_header_above(header = c("Résultats du test de Breush-Pagan"=2))
+```
+
+- P-value proche de 0, on rejette l'hypothèse nulle d'homoscédasticité des résidus, les résidus sont donc hétéroscédastiques.
+
+- Notre intuition graphique est bien confirmée par l'analyse statistique.
+
+- Graphique 4
+
+Les valeurs extrêmes "outliers" sont des valeurs bien plus grandes que les autres de la variable prédite. Si la prédiction est trop loin des vrais valeurs, alors cela pénalise le modèle. De plus, cela impact artificiellement la pente de la regression, qui essaye de prendre en compte ces valeurs. Il est donc important de prendre en compte ces valeurs. Cependant,  un point peut être abérant mais ne pas réellement avoir d'influence sur la qualité du modèle, surtout si le nombre d'observations est très grand. Pour voir cela, nous pouvons regarder de plus près la distance de Cook qui mesure cette influence ainsi que vérifier avec le package performance s'il n'y a pas d'outliers dans ce modèle.
+ 
+```{r, fig.height = 5, fig.width = 6,echo=TRUE}
+plot(to1,4)
+```
+
+La distance de cook est trop grande si elle dépasse 1, ce qui n'est pas le cas ici. On peut aussi le voir par notre test qui nous signale qu'il n'y a pas d'outliers.
+
+
+```{r,echo=TRUE}
+check_outliers(to1)
+```
+
+Enfin vérifions s'il n'y a pas de problèmes de multicolinéarité :
+
+```{r,echo=TRUE}
+plot(check_collinearity(to1))
+```
+
+Pas de problème de multicolinéarité, les facteurs d'inflation de la variance (VIF) sont inférieurs à 2.
+
+## Modèle 2
+
+Pour le second modèle, nous reprenons la même démarche (sans le détail des explications des graphiques).
+
+```{r, fig.height=7, fig.width=9}
+par(mfrow=c(2,2)); plot(to2)
+```
+
+- Graphique 1, linéarité
+
+Le test de Rainbow :
+
+```{r}
+rto2<-raintest(to2)
+into2<-c(rto2$statistic,rto2$p.value)
+names(into2)<-c("Rainbow","P-value")
+kable_opti(into2,transp = T) %>% add_header_above(header = c("Résultats du test de Rainbow"=2))
+```
+
+- Cette fois-ci, la p-value est supérieure au seuil de 5%, on conserve l'hypothèse nulle de linéarité des données.
+
+- Normalité des résidus
+
+On observe toujours que les valeurs extrêmes ne sont pas alignées avec la droite. Test de Jarque Bera : 
+
+```{r}
+jto2<-jarque.bera.test(residuals(to2))
+jnto2<-c(jto2$statistic,jto2$p.value)
+names(jnto2)<-c("Jarque Bera","P-value")
+kable_opti(jnto2,transp = T) %>% add_header_above(header = c("Résultats du test de Jarque Bera"=2))
+```
+
+- P-value proche de 0, rejet de l'hypothèse nulle de normalité des résidus, ce qui confirme nos observations.
+
+- La distribution observée n'est pas compatible avec une distribution théorique normale.
+
+- Graphique 3
+
+```{r, fig.height = 5, fig.width = 6}
+plot(check_heteroskedasticity(to2))
+```
+
+- Intuition graphique à la non homogénéité des variances des résidus. Test de Breush-Pagan:
+
+```{r}
+bto2<-bptest(to2)
+bnto2<-c(bto2$statistic,bto2$p.value)
+names(bnto2)<-c("Breush-Pagan","P-value")
+kable_opti(bnto2,transp = T) %>% add_header_above(header = c("Résultats du test de Breush-Pagan"=2))
+
+```
+
+- P-value proche de 0, on rejette l'hypothèse nulle d'homoscédasticité des résidus, les résidus sont donc hétéroscédastiques.
+
+- Notre intuition graphique est bien confirmée par l'analyse statistique.
+
+- Graphique 4, Distance de Cook :
+
+```{r, fig.height = 5, fig.width = 6}
+plot(to2,4)
+```
+
+La distance de cook est trop grande si elle dépasse 1, ce qui n'est pas le cas ici. On peut aussi le voir par notre test qui nous signale qu'il n'y a pas d'outliers.
+
+```{r,echo=TRUE}
+check_outliers(to2)
+```
+
+Enfin vérifions s'il n'y a pas de problèmes de multicolinéarité :
+
+```{r, fig.height = 5, fig.width = 6}
+plot(check_collinearity(to2))
+```
+
+- Pas de problème de multicolinéarité, les facteurs d'inflation de la variance (VIF) sont inférieurs à 2.
+
+
+## Modèle 3
+
+Pour le dernier modèle, nous reprenons la même démarche (sans le détail des explications des graphiques).
+
+```{r, fig.height=7, fig.width=9}
+par(mfrow=c(2,2)); plot(to6)
+```
+
+- Graphique 1 linéarité. Le test de Rainbow :
+
+```{r}
+rto6<-raintest(to6)
+into6<-c(rto6$statistic,rto6$p.value)
+names(into6)<-c("Rainbow","P-value")
+kable_opti(into6,transp = T) %>% add_header_above(header = c("Résultats du test de Rainbow"=2))
+```
+
+- La p-value est supérieure au seuil de 5%, on conserve l'hypothèse nulle de linéarité des données.
+
+- Normalité des résidus, On observe toujours que les valeurs extrêmes ne sont pas alignées avec la droite. Le Test de Jarque Bera : 
+
+```{r}
+jto6<-jarque.bera.test(residuals(to6))
+jnto6<-c(jto6$statistic,jto6$p.value)
+names(jnto6)<-c("Jarque Bera","P-value")
+kable_opti(jnto6,transp = T) %>% add_header_above(header = c("Résultats du test de Jarque Bera"=2))
+```
+
+- P-value proche de 0, rejet de l'hypothèse nulle de normalité des résidus, ce qui confirme nos observations.
+
+- La distribution observée n'est pas compatible avec une distribution théorique normale.
+
+- Graphique 3
+
+```{r, fig.height = 5, fig.width = 5.5}
+plot(check_heteroskedasticity(to6))
+```
+
+- Intuition graphique à la non homogénéité des variances des résidus.
+
+Test de Breush-Pagan:
+```{r}
+bto6<-bptest(to6)
+bnto6<-c(bto6$statistic,bto6$p.value)
+names(bnto6)<-c("Breush-Pagan","P-value")
+kable_opti(bnto6,transp = T) %>% add_header_above(header = c("Résultats du test de Breush-Pagan"=2))
+```
+
+- P-value proche de 0, on rejette l'hypothèse nulle d'homoscédasticité des résidus, les résidus sont donc hétéroscédastiques.
+
+- Notre intuition graphique est bien confirmée par l'analyse statistique.
+
+- Graphique 4, Distance de Cook :
+
+```{r, fig.height = 5, fig.width = 7}
+plot(to6,4)
+```
+
+La distance de cook est trop grande si elle dépasse 1, ce qui n'est pas le cas ici. On peut aussi le voir par notre test qui nous signale qu'il n'y a pas d'outliers.
+
+```{r,echo=TRUE}
+check_outliers(to6)
+```
+
+Enfin vérifions s'il n'y a pas de problèmes de multicolinéarité :
+
+```{r, fig.height = 5, fig.width = 5.5}
+plot(check_collinearity(to6))
+```
+
+Pas de problème de multicolinéarité, les facteurs d'inflation de la variance (VIF) sont inférieurs à 2.
+
+# Estimation robuste 
+
+Suite à ces nombreux tests, on se rend compte que l'hypothèse d'homoscédasticité ne tient pas et qu'il est donc préférable d'utiliser une autre méthode que celle des Moindres Carrés Ordinaires (MCO). En effet en utilisant cette méthode alors qu'on a de l'hétéroscédasticité, l'estimateur de la matrice de variance-covariances des résidus (Omega) est biaisé, même asymptotiquement, ce qui pose problème. On peut donc décider de relâcher l'hypothèse d'homoscésasticité des résidus et considérer la méthode des Moindres Carrés Généralisés (MCG), qui nous permet de considérer une matrice de variance-covariance inconnue.
+
+De plus, la méthode des Ecart-types robustes (HCSE) fournit une estimation intéressante et asymptotiquement sans-biais de la matrice Omega. Etant donné qu'on a réalisé nos premiers tests avec les MCO, la statistique du test de Student (t-test ) n'est pas fiable car la matrice Omega est biaisée.
+On réalise donc un nouveau test pour chaque modèle, dont la matrice de variance-covariance Omega de chacun est estimée avec la méthode des HCSE, et en particulier avec l'estimateur de White.
+
+## Modèle 1
+
+On estime (asymptotiquement) sans biais la matrice de variance-covariance du modèle 1 par : 
+
+```{r,echo=TRUE}
+round(vcovHC(to1, type = "HC0"),8)
+
+```
+
+On réalise la régression robuste avec cette matrice Omega :
+
+```{r,echo=TRUE}
+roto1 <- coeftest(to1, vcov = vcovHC(to1, type = "HC0"))
+roto1
+```
+
+```{r,echo=TRUE}
+plot_summs(to1, roto1, model.names = c("Non robuste","Robuste"), colors = c("blue","red"), legend.title = "Modèle 1")
+```
+
+On constate une faible différence concernant les coefficients. En effet les deux méthodes (MCO et HCSE) estiment sans biais les coefficients, la différence se situe principalement au niveau de la matrice de variance-covariance qui elle est asympotiquement sans biais. On remarque des écart-types sensiblement différents.
+
+## Modèle 2
+
+On réalise la procédure pour le modèle 2 :
+
+On estime (asymptotiquement) sans biais la matrice de variance-covariance du modèle 2 par : 
+
+```{r}
+round(vcovHC(to2, type = "HC0"), 8)
+```
+
+On réalise la régression robuste avec cette matrice Omega :
+
+```{r}
+roto2 <- coeftest(to2, vcov = vcovHC(to2, type = "HC0"))
+roto2
+plot_summs(to2, roto2, model.names = c("Non robuste","Robuste"), colors = c("purple","orange"), legend.title = "Modèle 2")
+```
+
+Comme le modèle 1, on constate de légères différences concernant les écart-types de nos coefficents estimés.
+
+## Modèle 3
+
+Pour finir, on réalise la procédure pour le modèle final :
+
+On estime (asymptotiquement) sans biais la matrice de variance-covariance du modèle final par : 
+
+```{r}
+round(vcovHC(to6, type = "HC0"), 8)
+```
+
+On réalise la régression robuste avec cette matrice Omega :
+
+```{r}
+roto6 <- coeftest(to6, vcov = vcovHC(to6, type = "HC0"))
+roto6
+plot_summs(to6, roto6, model.names = c("Non robuste","Robuste"), colors = c("black","green3"), legend.title = "Modèle final")
+```
+
+Comme les modèles 1 et 2, on s'aperçoit des légères différences d'écart-types de nos coefficents estimés.
+
+
+# Annexe 
+
+On présente ici différentes pistes de recherche qu'on a pu avoir, notamment des modèles qui s'avèrent intéressants mais qu'on a préféré écarter pour notre analyse.
+
+## Modèle non contraint
+
+Lors du premier test Log(Prix) ~ Log(SurfaceHabitable), on a mentionné le fait qu'il aurait pu être intéressant de choisir un modèle contraint avec une ordonnée à l'origine nulle car ceci semblait cohérent, sous réserve d'un biais plus imporant. On développe un peu plus cette idée ci-dessous
+
+  - Log(Prix) ~ 0 + Log(SurfaceHabitable)      (1)
+  - Log(Prix) ~ Log(SurfaceHabitable)      (2)
+
+```{r}
+t1 <- lm(lnprice ~ 0 + lnliv15, data=data2)
+export_summs(t1,to1, model.names = c("(1)", "(2)"))
+```
+
+t1 correspond au modèle (1) et t4 correspond au modèle (2)
+
+```{r}
+compare_performance(t1,t4)
+```
+
+En contraigrant l'ordonnée à l'origine, on observe un R² de 1 ! Notre ajustement serait donc parfait. 
+
+:::: {style="display: grid; grid-template-columns: 1fr 1fr; grid-column-gap: 40px; "}
+
+::: {}
+
+```{r}
+ggplot(data2, aes(x = lnliv15, y = lnprice)) + xlim(0,9) + ylim(0,16) + geom_point(size = 0.85,color = "green4")+ labs(x = "Log(Surface habitable)",y= "Log(Prix)", title = "Log(Prix) en fonction de la Log(surface habitable)")+theme_bw()
+```
+
+:::
+
+::: {}
+
+
+
+Or, on ne dispose d'aucune valeur entre l'origine et le nuage de points, on a donc aucune information à exploiter et estimer cette relation par une droite serait tout aussi faux que de l'estimer par une autre forme.
+
+Il faut donc rester prudent quant à cette hypothèse d'ordonnée à l'origine contrainte, bien que le raisonnement derrière est intéressant, nous ne pouvons pas estimer de relation entre l'origine et nos valeurs, dans notre cas.
+
+:::
+
+::::
+
+
+## Modèle avec grade
+
+Nous rajoutons une sous partie à notre analyse qui concerne la variable "grade" de la base de données mais qui n'est pas définie. Elle est donc plus à prendre comme une hyphothèse et avec précaution. Après quelques recherches sur Internet, on a pu trouver que c'était un critère mesurant par exemple la qualité des matériaux utilisés ainsi que le design de la maison par exemple si elle avait un style spécial. Nous avons choisi d'en parler car par curiosité on a remarqué que c'était une variable qui avait une forte influence sur le prix :
+
+```{r}
+ggplot(data=data2, aes(group = grade, y = lnprice, x = grade, fill = grade)) + geom_boxplot(fill = "yellow2", color="black") + scale_fill_viridis() + theme_bw() + labs(x = "Grade", y = "Log(Prix)", title = "Répartition du prix (log) selon les grades")
+```
+
+Reprenons les trois derniers tests que l'on a effectué, en rajoutant la variable "grade", puis comparons à notre premier modèle :
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Grade    (1)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Nord + VueEau    (2)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Grade + Nord + VueEau    (3)
+
+On compare avec notre deuxième modèle :
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) +  Nord + NombreSallesBain + VueEau + Rénovation       (1)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Nord + NombreSallesBain + VueEau + Rénovation + Grade      (2)
+  
+Et on compare avec notre modèle final :
+
+  -  Log(Prix) ~ Log(SurfaceHabitable) +  Nord + NombreSallesBain + VueEau + Rénovation + Condition + Young       (1)
+  -  Log(Prix) ~ Log(SurfaceHabitable) + Nord + NombreSallesBain + VueEau + Rénovation + Condition + Young + Grade    (2)
+ 
+
+
+
+:::: {style="display: grid; grid-template-columns: 1fr 1fr 1fr; grid-column-gap: 30px; "}
+
+::: {}
+
+```{r}
+tg1<-lm(lnprice~lnliv15+grade,data=data2)
+tg5<-lm(lnprice~lnliv15+nord+waterfront+grade,data = data2)
+export_summs(tg1,to1,tg5, model.names = c("(1)", "(2)", "(3)"))
+```
+
+:::
+
+::: {}
+
+```{r}
+tg2<-lm(lnprice~lnliv15+nord+bathrooms+waterfront+renov+grade,data = data2)
+to2<-lm(lnprice~lnliv15+nord+bathrooms+waterfront+renov,data = data2)
+export_summs(to2,tg2, model.names = c("(1)", "(2)"))
+```
+
+:::
+
+::: {}
+
+```{r}
+tg3<-lm(lnprice~lnliv15+nord+bathrooms+waterfront+renov+condition+basement+young+grade,data = data2)
+export_summs(to6,tg3, model.names = c("(1)", "(2)"))
+```
+
+:::
+
+::::
+
+
+Cette étude supplémentaire incluant la variable "grade" est difficilement interprétable car nous ne savons pas bien ce que cette variable signifie. De plus en comparant nos modèles avec l'ajout de "grade", on peut noter qu'elle augmente assez fortement le R² et le R² ajusté. Elle affaiblit aussi considérablement le coefficient de lnliv15 et de bathrooms.
