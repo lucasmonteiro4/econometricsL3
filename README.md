@@ -1,6 +1,6 @@
-This is a project realised by Baptiste VIOLA and Lucas MONTEIRO for Econometrics lectures of our third year.
+This is a project realised by Baptiste VIOLA and Lucas MONTEIRO for Econometrics lectures of our third year of Bachelor degree in Economics.
 
-Tee objectif was to find the more convenient model to predict the price of houses in Seattle area.
+The objectif was to find the more convenient model to predict the price of houses in Seattle area.
 
 There are 3 files :
 
